@@ -1,12 +1,15 @@
 import { IDENTITY, multiply, parseTransform, parsePathData, transformCmds, elementToPathData, prepareShape, cmdsToD } from './geometry.js';
 import { Packer } from './generator.js';
+import { parseHex, oklchGradient } from './color.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'pattern-generator-settings';
 
 const DEFAULTS = {
   folder: '01',
-  colors: '#000 #333 #666 #999 #CCC #FFF',
+  colorFrom: '#000000',
+  colorTo: '#FFFFFF',
+  colorCount: 6,
   width: 800,
   height: 800,
   background: '#808080',
@@ -84,7 +87,7 @@ function buildSliders() {
 }
 
 function bindInputs() {
-  for (const key of ['folder', 'colors', 'width', 'height', 'background', 'transparent', 'edge', 'seed', 'auto']) {
+  for (const key of ['folder', 'colorFrom', 'colorTo', 'colorCount', 'width', 'height', 'background', 'transparent', 'edge', 'seed', 'auto']) {
     const el = $(key);
     if (el.type === 'checkbox') el.checked = settings[key];
     else el.value = settings[key];
@@ -94,6 +97,17 @@ function bindInputs() {
       if (key !== 'folder') update(key, value);
       else settings.folder = value;
       save();
+    });
+  }
+  // Each hex field has a color picker next to it; keep the two in sync.
+  for (const picker of document.querySelectorAll('input[type="color"][data-for]')) {
+    const text = $(picker.dataset.for);
+    const sync = () => { if (parseHex(text.value)) picker.value = normalizeHex(text.value); };
+    sync();
+    text.addEventListener('input', sync);
+    picker.addEventListener('input', () => {
+      text.value = picker.value.toUpperCase();
+      update(picker.dataset.for, text.value);
     });
   }
   $('folder').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadFolder(); });
@@ -118,7 +132,7 @@ let debounce = 0;
 function update(key, value, force = false) {
   settings[key] = value;
   save();
-  if (key === 'colors') renderSwatches();
+  if (key.startsWith('color')) renderSwatches();
   if (key === 'background' || key === 'transparent') return applyBackground();
   if (settings.auto || force) {
     clearTimeout(debounce);
@@ -130,12 +144,16 @@ function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
-function parseColors(text) {
-  return text.split(/[\s,;]+/).filter((c) => c && CSS.supports('color', c));
+function normalizeHex(hex) {
+  return '#' + parseHex(hex).map((c) => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
+}
+
+function colorSet() {
+  return oklchGradient(settings.colorFrom, settings.colorTo, Math.min(256, Math.max(1, Math.round(settings.colorCount))));
 }
 
 function renderSwatches() {
-  $('swatches').replaceChildren(...parseColors(settings.colors).map((c) => {
+  $('swatches').replaceChildren(...colorSet().map((c) => {
     const s = document.createElement('span');
     s.style.background = c;
     s.title = c;
@@ -264,7 +282,7 @@ function readParams() {
     width: Math.max(10, n('width')),
     height: Math.max(10, n('height')),
     edge: settings.edge,
-    colors: parseColors(settings.colors),
+    colors: colorSet(),
     strokeWidth: n('strokeWidth'),
     strokeWidthRand: Math.abs(n('strokeWidthRand')),
     safe: n('safe'),
@@ -286,7 +304,7 @@ function generate() {
   const my = ++job;
   const P = readParams();
   if (!shapes.length) return status('Load a shape folder to start');
-  if (!P.colors.length) return status('Add at least one valid color');
+  if (!P.colors.length) return status('Enter valid hex colors, e.g. #1A2B3C');
 
   packer = new Packer(shapes, P, settings.seed);
   const it = packer.run();

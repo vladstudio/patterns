@@ -24,7 +24,11 @@
 
     <section>
       <h2>Colors</h2>
-      <input id="colors" spellcheck="false">
+      <div class="colors">
+        <label>From <span class="row"><input type="color" data-for="colorFrom"><input id="colorFrom" spellcheck="false"></span></label>
+        <label>To <span class="row"><input type="color" data-for="colorTo"><input id="colorTo" spellcheck="false"></span></label>
+        <label>Count <input id="colorCount" type="number" min="1" step="1"></label>
+      </div>
       <div id="swatches" class="swatches"></div>
     </section>
 

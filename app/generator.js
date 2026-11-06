@@ -15,6 +15,7 @@ import { segSegDist, pointSegDist2, simplify, transformCmds, cmdsToD } from './g
 const TILE_OFFSETS = [];
 for (const ox of [-1, 0, 1]) for (const oy of [-1, 0, 1]) TILE_OFFSETS.push([ox, oy]);
 
+const PHASE1_SHARE = 0.6; // share of the progress bar given to phase 1 (roughly its share of the time)
 const EPS = 0.25; // px: how close a sliding shape gets before it is considered "touching"
 
 export function makeRng(seed) {
@@ -73,6 +74,14 @@ export class Packer {
     this.sr = []; this.sg = []; this.stamp = [];
     this.qid = 0;
     this.placed = [];
+
+    // Progress (0..1). Phase 1 is measured by how many cells of a coarse grid contain a
+    // shape's center; phase 2 by how far the gap-filling sweep has got.
+    this.progress = 0;
+    this.covSize = Math.max(8, 2 * (this.maxRad + this.maxG));
+    this.covCols = Math.ceil(this.W / this.covSize);
+    this.covered = new Uint8Array(this.covCols * Math.ceil(this.H / this.covSize));
+    this.coveredCount = 0;
   }
 
   jitter(base, spread) {
@@ -193,6 +202,10 @@ export class Packer {
       r: sp.r, g: sp.g, rad: sp.rad, minx: sp.minx, miny: sp.miny, maxx: sp.maxx, maxy: sp.maxy,
     };
     const idx = this.placed.push(p) - 1;
+    if (x >= 0 && x < W && y >= 0 && y < H) {
+      const c = Math.floor(y / this.covSize) * this.covCols + Math.floor(x / this.covSize);
+      if (!this.covered[c]) { this.covered[c] = 1; this.coveredCount++; }
+    }
     const offsets = this.P.edge === 'tile' ? TILE_OFFSETS : [[0, 0]];
     const L = sp.local;
 
@@ -266,6 +279,7 @@ export class Packer {
       }
       if (added >= 0) active.push(added);
       else { active[ai] = active[active.length - 1]; active.pop(); }
+      this.progress = PHASE1_SHARE * Math.min(1, this.coveredCount / this.covered.length);
       yield 1;
     }
 
@@ -298,8 +312,12 @@ export class Packer {
           }
         }
       }
-      if ((n & 255) === 0) yield 2;
+      if ((n & 255) === 0) {
+        this.progress = PHASE1_SHARE + (1 - PHASE1_SHARE) * (n / order.length);
+        yield 2;
+      }
     }
+    this.progress = 1;
   }
 
   // Output paths for one placement (several copies in tile mode).

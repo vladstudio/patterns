@@ -125,7 +125,7 @@ function bindInputs() {
   $('importSettings').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', importSettings);
   $('frame').addEventListener('click', () => { $('frame').classList.toggle('actual'); fit(); });
-  new ResizeObserver(fit).observe($('stage'));
+  new ResizeObserver(fit).observe($('viewport'));
 }
 
 const FIELDS = ['folder', 'colorFrom', 'colorTo', 'colorCount', 'width', 'height', 'background', 'transparent', 'edge', 'seed', 'auto'];
@@ -195,7 +195,7 @@ function applySettings() {
 
 // Ranges are narrower than the sliders' on purpose, and a draw is rejected when it would
 // produce more than ~LUCKY_MAX_SHAPES (e.g. dots with a 2px stroke on a large canvas
-// is 180k shapes and several seconds of work).
+// is 180k shapes and several seconds of work). Canvas size is left as it is.
 const LUCKY_MAX_SHAPES = 15000;
 
 async function feelingLucky() {
@@ -224,8 +224,6 @@ async function feelingLucky() {
       colorFrom: hex(),
       colorTo: hex(),
       colorCount: rand(2, 8),
-      width: rand(400, 1200, 50),
-      height: rand(400, 1200, 50),
       background: hex(),
       transparent: Math.random() < 0.2,
       edge: pick(['clip', 'inside', 'tile']),
@@ -241,7 +239,7 @@ async function feelingLucky() {
     };
     // Rough shape count: canvas area over each shape's footprint (calibrated on real runs).
     const thick = strokeWidth + safe;
-    if ((1.25 * next.width * next.height) / ((length * scale + thick) * thick) <= LUCKY_MAX_SHAPES) break;
+    if ((1.25 * settings.width * settings.height) / ((length * scale + thick) * thick) <= LUCKY_MAX_SHAPES) break;
   }
   Object.assign(settings, next);
   ({ shapes, errors: shapeErrors } = set);
@@ -427,11 +425,14 @@ function svgEl(tag, attrs) {
 function generate() {
   const my = ++job;
   const P = readParams();
+  setPending(false); // a run in progress is abandoned below (job changed)
   if (!shapes.length) return status('No shapes loaded');
   if (!P.colors.length) return status('Enter valid hex colors, e.g. #1A2B3C');
 
   packer = new Packer(shapes, P, settings.seed);
   const it = packer.run();
+  status('');
+  setPending(true);
 
   const svg = svgEl('svg', { width: P.width, height: P.height, viewBox: `0 0 ${P.width} ${P.height}` });
   const bg = svgEl('rect', { id: 'bg', width: P.width, height: P.height });
@@ -441,16 +442,13 @@ function generate() {
   applyBackground();
   fit();
 
-  let drawn = 0, phase = 1;
-  const t0 = performance.now();
+  let drawn = 0;
   const tick = () => {
     if (my !== job) return;
     const until = performance.now() + 25;
     let done = false;
     while (performance.now() < until) {
-      const r = it.next();
-      if (r.done) { done = true; break; }
-      phase = r.value;
+      if (it.next().done) { done = true; break; }
     }
     const frag = document.createDocumentFragment();
     for (; drawn < packer.placed.length; drawn++) {
@@ -459,11 +457,28 @@ function generate() {
       }
     }
     g.append(frag);
-    const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    if (done) status(`${packer.placed.length} shapes · ${secs}s`);
-    else { status(`${phase === 1 ? 'Placing' : 'Filling gaps'}… ${packer.placed.length} shapes`); requestAnimationFrame(tick); }
+    if (done) return setPending(false);
+    const pct = Math.floor(packer.progress * 100);
+    $('progress').style.width = pct + '%';
+    $('progressLabel').textContent = `Generating… ${pct}%`;
+    requestAnimationFrame(tick);
   };
   tick();
+}
+
+// The progress UI appears only if generating takes longer than a moment, so quick
+// redraws while dragging a slider don't flicker. Download waits for a finished pattern.
+let pendingTimer = 0;
+function setPending(on) {
+  clearTimeout(pendingTimer);
+  $('download').disabled = on;
+  if (on) {
+    $('progress').style.width = '0%';
+    $('progressLabel').textContent = 'Generating…';
+    pendingTimer = setTimeout(() => document.body.classList.add('pending'), 200);
+  } else {
+    document.body.classList.remove('pending');
+  }
 }
 
 function applyBackground() {
@@ -480,8 +495,9 @@ function fit() {
     svg.style.height = H + 'px';
     return;
   }
-  const stage = $('stage');
-  const k = Math.min(1, (stage.clientWidth - 64) / W, (stage.clientHeight - 64) / H);
+  // Like object-fit: contain — as large as the preview area allows.
+  const view = $('viewport');
+  const k = Math.min(view.clientWidth / W, view.clientHeight / H);
   svg.style.width = Math.max(1, W * k) + 'px';
   svg.style.height = Math.max(1, H * k) + 'px';
 }
@@ -501,6 +517,14 @@ function download() {
 }
 
 // ---------- init ----------
+
+// The canvas starts out the size of the preview area, so the pattern fills it 1:1.
+const view = $('viewport');
+if (view.clientWidth > 0 && view.clientHeight > 0) {
+  settings.width = view.clientWidth;
+  settings.height = view.clientHeight;
+  save();
+}
 
 buildSliders();
 bindInputs();

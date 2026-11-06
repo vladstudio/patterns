@@ -2,9 +2,34 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pattern generator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pattern generator — free seamless SVG patterns from your own shapes</title>
+  <meta name="description" content="Free online pattern generator. Pack squiggles, dots, spirals or your own SVG shapes into dense, non-overlapping patterns and seamless tiles. Download as SVG.">
+  <link rel="canonical" href="https://vladstudio.github.io/patterns/">
+  <meta name="theme-color" content="#1d1d1f">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://vladstudio.github.io/patterns/">
+  <meta property="og:title" content="Pattern generator">
+  <meta property="og:description" content="Pack squiggles, dots, spirals or your own SVG shapes into dense, non-overlapping patterns and seamless tiles. Free, in your browser.">
+  <meta property="og:image" content="https://vladstudio.github.io/patterns/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Pattern generator",
+      "url": "https://vladstudio.github.io/patterns/",
+      "description": "Pack SVG shapes into dense, non-overlapping patterns and seamless tiles. Download as SVG.",
+      "applicationCategory": "DesignApplication",
+      "operatingSystem": "Any",
+      "offers": { "@type": "Offer", "price": "0" },
+      "author": { "@type": "Person", "name": "Vlad Gerasimov" }
+    }
+  </script>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -31,8 +56,8 @@
     <section>
       <h2>Canvas</h2>
       <div class="grid2">
-        <label>Width <input id="width" type="number" min="10" step="10"></label>
-        <label>Height <input id="height" type="number" min="10" step="10"></label>
+        <label>Width <input id="width" type="number" min="10" max="10000" step="10"></label>
+        <label>Height <input id="height" type="number" min="10" max="10000" step="10"></label>
       </div>
       <div class="grid2">
         <label>Background
@@ -60,7 +85,7 @@
       <button id="lucky" class="wide" title="Random values for every setting">I feel lucky</button>
     </section>
 
-    <section class="actions">
+    <section class="actions main-actions">
       <button id="generate" class="primary">Generate</button>
       <button id="download">Download SVG</button>
     </section>

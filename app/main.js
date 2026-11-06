@@ -5,6 +5,7 @@ import { roughExtent, roughCircles, circlesToD } from './stroke.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'pattern-generator-settings';
+const MAX_CANVAS = 10000; // px per side; larger canvases take too long to pack and render
 
 const DEFAULTS = {
   folder: 'almost-straight',
@@ -60,6 +61,7 @@ const $ = (id) => document.getElementById(id);
 const settings = { ...DEFAULTS };
 const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
 for (const key in DEFAULTS) if (typeof stored[key] === typeof DEFAULTS[key]) settings[key] = stored[key];
+clampCanvas();
 let shapes = [];
 let packer = null;
 let job = 0;
@@ -116,6 +118,10 @@ function bindInputs() {
     el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', () => {
       const value = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value;
       if (el.type === 'number' && !(value > 0)) return;
+      if ((key === 'width' || key === 'height') && value > MAX_CANVAS) {
+        el.value = MAX_CANVAS;
+        return update(key, MAX_CANVAS);
+      }
       if (key !== 'folder') return update(key, value);
       settings.folder = value;
       save();
@@ -193,6 +199,7 @@ async function importSettings(e) {
   for (const key in DEFAULTS) {
     if (typeof data[key] === typeof DEFAULTS[key]) settings[key] = data[key];
   }
+  clampCanvas();
   await loadFolderList();
   if (!folders.includes(settings.folder)) {
     $('folderNote').textContent = `${file.name} uses shape set “${settings.folder}”, which isn't in shapes/. Kept “${previousFolder}”.`;
@@ -286,6 +293,10 @@ function update(key, value, force = false) {
   }
 }
 
+function clampCanvas() {
+  for (const key of ['width', 'height']) settings[key] = Math.min(MAX_CANVAS, settings[key]);
+}
+
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
@@ -337,10 +348,16 @@ function svgToShape(name, text) {
 
 let shapeErrors = [];
 
+// shapes.json holds every shape set: { "<set>": [{ name, svg }, …] } (see tools/library.mjs).
+async function fetchLibrary() {
+  const res = await fetch('shapes.json', { cache: 'no-cache' });
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
 async function fetchShapes(folder) {
-  const res = await fetch(`/api/shapes?folder=${encodeURIComponent(folder)}`);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  const data = (await fetchLibrary())[folder];
+  if (!data) throw new Error('Not found');
   const shapes = [], errors = [];
   for (const { name, svg } of data) {
     try {
@@ -404,7 +421,7 @@ async function loadFolder() {
 
 async function loadFolderList() {
   try {
-    folders = await (await fetch('/api/folders')).json();
+    folders = Object.keys(await fetchLibrary());
   } catch {
     folders = [];
   }
@@ -419,8 +436,8 @@ async function loadFolderList() {
 function readParams() {
   const n = (k) => Number(settings[k]) || 0;
   return {
-    width: Math.max(10, n('width')),
-    height: Math.max(10, n('height')),
+    width: Math.min(MAX_CANVAS, Math.max(10, n('width'))),
+    height: Math.min(MAX_CANVAS, Math.max(10, n('height'))),
     edge: settings.edge,
     colors: colorSet(),
     strokeWidth: n('strokeWidth'),
@@ -455,7 +472,7 @@ function generate() {
 
   packer = new Packer(shapes, P, settings.seed);
   const it = packer.run();
-  status('');
+  status(P.width === MAX_CANVAS || P.height === MAX_CANVAS ? `Canvas is limited to ${MAX_CANVAS} × ${MAX_CANVAS}` : '');
   setPending(true);
 
   const svg = svgEl('svg', { width: P.width, height: P.height, viewBox: `0 0 ${P.width} ${P.height}` });

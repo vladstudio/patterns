@@ -85,10 +85,13 @@ button {
   white-space: nowrap;
 }
 
-button:hover { background: var(--hover); }
-
 button.primary { background: var(--text); border-color: var(--text); color: var(--field); }
-button.primary:hover { background: var(--primary-hover); }
+
+/* No hover styles on touch screens, where they stick after a tap. */
+@media (hover: hover) {
+  button:hover { background: var(--hover); }
+  button.primary:hover { background: var(--primary-hover); }
+}
 
 .row { display: flex; gap: 6px; align-items: center; }
 .grow { flex: 1; }
@@ -190,3 +193,42 @@ body.pending #pending { display: block; }
 
 button:disabled { opacity: 0.45; cursor: default; }
 button:disabled:hover { background: var(--field); }
+button.primary:disabled:hover { background: var(--text); }
+
+/* Phones: preview on top, controls scroll below it, Generate/Download pinned to the bottom. */
+@media (max-width: 720px) {
+  html, body { height: 100dvh; }
+  body { flex-direction: column; }
+
+  #stage { flex: none; height: 45dvh; order: -1; }
+
+  #panel {
+    flex: 1;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    padding: 12px 16px 0;
+    border-right: none;
+    border-top: 1px solid var(--divider);
+  }
+
+  /* 16px stops iOS from zooming in when a field gets focus. */
+  input:not([type]), input[type="number"], select { font-size: 16px; padding: 7px 9px; }
+  input[type="color"] { height: 36px; }
+  .colors input[type="color"] { width: 36px; }
+  .colors { grid-template-columns: 1fr 1fr 64px; }
+  button { padding: 9px 14px; }
+  .slider { grid-template-columns: 78px 1fr 72px; margin-bottom: 10px; }
+  .slider input[type="number"] { padding: 5px 7px; }
+  .check input { width: 20px; height: 20px; }
+
+  .main-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: 0 -16px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    background: var(--panel);
+  }
+  .main-actions + .actions { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+}

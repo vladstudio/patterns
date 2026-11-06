@@ -1,4 +1,4 @@
-// Tiny zero-dependency dev server: serves ./app and the shape sets in ./shapes/<name>/*.svg.
+// Tiny zero-dependency dev server: serves ./app, plus shapes.json built live from ./shapes.
 //   node server.mjs            -> http://localhost:8787
 //   PORT=9000 node server.mjs
 
@@ -6,37 +6,20 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readLibrary } from './tools/library.mjs';
 
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const APP = path.join(ROOT, 'app');
-const SHAPES = path.join(ROOT, 'shapes');
+const APP = path.join(path.dirname(fileURLToPath(import.meta.url)), 'app');
 const PORT = Number(process.env.PORT) || 8787;
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
-const isSvg = (name) => name.toLowerCase().endsWith('.svg');
-
-// A shape set is a direct subfolder of ./shapes; anything else (paths, "..") is rejected.
-function resolveFolder(name) {
-  if (!name || name.startsWith('.') || /[\\/]/.test(name)) throw Object.assign(new Error('Invalid folder'), { status: 400 });
-  return path.join(SHAPES, name);
-}
-
-async function listFolders() {
-  const entries = await fs.readdir(SHAPES, { withFileTypes: true }).catch(() => []);
-  const out = [];
-  for (const e of entries) {
-    if (!e.isDirectory() || e.name.startsWith('.')) continue;
-    const files = await fs.readdir(path.join(SHAPES, e.name));
-    if (files.some(isSvg)) out.push(e.name);
-  }
-  return out.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-}
-
-async function readShapes(folder) {
-  const dir = resolveFolder(folder);
-  const files = (await fs.readdir(dir)).filter(isSvg).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return Promise.all(files.map(async (name) => ({ name, svg: await fs.readFile(path.join(dir, name), 'utf8') })));
-}
+const TYPES = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.txt': 'text/plain',
+  '.xml': 'application/xml',
+};
 
 function send(res, status, body, type = 'application/json') {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -46,12 +29,7 @@ function send(res, status, body, type = 'application/json') {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   try {
-    if (url.pathname === '/api/folders') return send(res, 200, await listFolders());
-    if (url.pathname === '/api/shapes') {
-      const folder = url.searchParams.get('folder') || '';
-      if (!folder) return send(res, 400, { error: 'Missing folder' });
-      return send(res, 200, await readShapes(folder));
-    }
+    if (url.pathname === '/shapes.json') return send(res, 200, await readLibrary());
     const file = path.resolve(APP, '.' + (url.pathname === '/' ? '/index.html' : url.pathname));
     if (!file.startsWith(APP + path.sep)) return send(res, 403, 'Forbidden', 'text/plain');
     send(res, 200, await fs.readFile(file), TYPES[path.extname(file)] || 'application/octet-stream');

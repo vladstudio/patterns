@@ -47,10 +47,13 @@ const SLIDERS = [
 ];
 
 const $ = (id) => document.getElementById(id);
-const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') };
+const settings = { ...DEFAULTS };
+const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+for (const key in DEFAULTS) if (typeof stored[key] === typeof DEFAULTS[key]) settings[key] = stored[key];
 let shapes = [];
 let packer = null;
 let job = 0;
+let loadedFolder = null; // folder the current shapes came from (null if picked from disk)
 
 // ---------- controls ----------
 
@@ -67,7 +70,6 @@ function buildSliders() {
         `<input type="range" min="${row.min}" max="${row.max}" step="${row.step}">` +
         `<input type="number" id="${row.key}" step="${row.step}" ${row.min >= 0 ? 'min="0"' : ''}>`;
       const [range, number] = el.querySelectorAll('input');
-      range.value = number.value = settings[row.key];
       range.addEventListener('input', () => { number.value = range.value; update(row.key, +range.value); });
       number.addEventListener('input', () => {
         if (number.value === '' || Number.isNaN(+number.value)) return;
@@ -87,10 +89,8 @@ function buildSliders() {
 }
 
 function bindInputs() {
-  for (const key of ['folder', 'colorFrom', 'colorTo', 'colorCount', 'width', 'height', 'background', 'transparent', 'edge', 'seed', 'auto']) {
+  for (const key of FIELDS) {
     const el = $(key);
-    if (el.type === 'checkbox') el.checked = settings[key];
-    else el.value = settings[key];
     el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', () => {
       const value = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value;
       if (el.type === 'number' && !(value > 0)) return;
@@ -102,9 +102,7 @@ function bindInputs() {
   // Each hex field has a color picker next to it; keep the two in sync.
   for (const picker of document.querySelectorAll('input[type="color"][data-for]')) {
     const text = $(picker.dataset.for);
-    const sync = () => { if (parseHex(text.value)) picker.value = normalizeHex(text.value); };
-    sync();
-    text.addEventListener('input', sync);
+    text.addEventListener('input', () => { if (parseHex(text.value)) picker.value = normalizeHex(text.value); });
     picker.addEventListener('input', () => {
       text.value = picker.value.toUpperCase();
       update(picker.dataset.for, text.value);
@@ -120,12 +118,60 @@ function bindInputs() {
   });
   $('generate').addEventListener('click', generate);
   $('download').addEventListener('click', download);
-  $('reset').addEventListener('click', () => {
-    localStorage.removeItem(STORAGE_KEY);
-    location.reload();
-  });
+  $('exportSettings').addEventListener('click', exportSettings);
+  $('importSettings').addEventListener('click', () => $('importFile').click());
+  $('importFile').addEventListener('change', importSettings);
   $('frame').addEventListener('click', () => { $('frame').classList.toggle('actual'); fit(); });
   new ResizeObserver(fit).observe($('stage'));
+}
+
+const FIELDS = ['folder', 'colorFrom', 'colorTo', 'colorCount', 'width', 'height', 'background', 'transparent', 'edge', 'seed', 'auto'];
+
+// Push `settings` into every control.
+function syncInputs() {
+  for (const key of FIELDS) {
+    const el = $(key);
+    if (el.type === 'checkbox') el.checked = settings[key];
+    else el.value = settings[key];
+  }
+  for (const [, , rows] of SLIDERS) {
+    for (const { key } of rows) $(key).value = $(key).previousElementSibling.value = settings[key];
+  }
+  for (const picker of document.querySelectorAll('input[type="color"][data-for]')) {
+    const value = settings[picker.dataset.for];
+    if (parseHex(value)) picker.value = normalizeHex(value);
+  }
+  renderSwatches();
+}
+
+function exportSettings() {
+  const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `pattern-settings-${settings.seed}.json`.replace(/[^\w.-]+/g, '_');
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// Only known keys are taken, and only when their type matches the default's.
+async function importSettings(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('not a settings object');
+  } catch (err) {
+    return status(`Couldn't import ${file.name}: ${err.message}`);
+  }
+  for (const key in DEFAULTS) {
+    if (typeof data[key] === typeof DEFAULTS[key]) settings[key] = data[key];
+  }
+  save();
+  syncInputs();
+  if (settings.folder && settings.folder !== loadedFolder) loadFolder();
+  else generate();
 }
 
 let debounce = 0;
@@ -247,9 +293,11 @@ async function loadFolder() {
     const res = await fetch(`/api/shapes?folder=${encodeURIComponent(folder)}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
+    loadedFolder = folder;
     setShapes(data, `“${folder}”`);
   } catch (err) {
     shapes = [];
+    loadedFolder = null;
     $('shapeList').innerHTML = '';
     const el = document.createElement('div');
     el.className = 'msg err';
@@ -263,6 +311,7 @@ async function pickFolder(e) {
   files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   const folder = e.target.files[0]?.webkitRelativePath.split('/')[0] || 'picked folder';
   $('folder').value = '';
+  loadedFolder = null;
   setShapes(await Promise.all(files.map(async (f) => ({ name: f.name, svg: await f.text() }))), `“${folder}” (from disk)`);
   e.target.value = '';
 }
@@ -380,7 +429,7 @@ function download() {
 
 buildSliders();
 bindInputs();
-renderSwatches();
+syncInputs();
 loadFolderList();
 if (settings.folder) loadFolder();
 else status('Load a shape folder to start');

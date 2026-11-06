@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pattern generator</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="panel">
+    <h1>Pattern generator</h1>
+
+    <section>
+      <h2>Shapes</h2>
+      <div class="row">
+        <input id="folder" list="folders" placeholder="Folder, e.g. 01" spellcheck="false">
+        <button id="loadFolder">Load</button>
+      </div>
+      <datalist id="folders"></datalist>
+      <label class="link">…or pick a folder from disk<input type="file" id="pickFolder" webkitdirectory multiple hidden></label>
+      <div id="shapeList" class="shapes"></div>
+    </section>
+
+    <section>
+      <h2>Colors</h2>
+      <input id="colors" spellcheck="false">
+      <div id="swatches" class="swatches"></div>
+    </section>
+
+    <section>
+      <h2>Canvas</h2>
+      <div class="grid2">
+        <label>Width <input id="width" type="number" min="10" step="10"></label>
+        <label>Height <input id="height" type="number" min="10" step="10"></label>
+      </div>
+      <div class="grid2">
+        <label>Background
+          <span class="row"><input id="background" type="color"><label class="check"><input id="transparent" type="checkbox"> None</label></span>
+        </label>
+        <label>Edges
+          <select id="edge">
+            <option value="clip">Bleed &amp; clip</option>
+            <option value="inside">Keep inside</option>
+            <option value="tile">Seamless tile</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <div id="sliders"></div>
+
+    <section>
+      <h2>Randomness</h2>
+      <div class="row">
+        <label class="grow">Seed <input id="seed" spellcheck="false"></label>
+        <button id="reseed" title="New random seed">New seed</button>
+      </div>
+      <label class="check"><input id="auto" type="checkbox"> Regenerate on every change</label>
+    </section>
+
+    <section class="actions">
+      <button id="generate" class="primary">Generate</button>
+      <button id="download">Download SVG</button>
+    </section>
+    <button id="reset" class="link">Reset all settings</button>
+  </aside>
+
+  <main id="stage">
+    <div id="frame"></div>
+    <div id="status"></div>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

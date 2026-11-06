@@ -11,6 +11,7 @@
 // shapes into any hole that is still large enough.
 
 import { segSegDist, pointSegDist2, simplify, transformCmds, cmdsToD } from './geometry.js';
+import { roughExtent, roughCircles, circlesToD } from './stroke.js';
 
 const TILE_OFFSETS = [];
 for (const ox of [-1, 0, 1]) for (const oy of [-1, 0, 1]) TILE_OFFSETS.push([ox, oy]);
@@ -39,13 +40,16 @@ export class Packer {
   /**
    * @param shapes  prepared shapes (see prepareShape)
    * @param P       { width, height, edge: 'clip'|'inside'|'tile', colors: string[],
-   *                  strokeWidth, strokeWidthRand, safe, safeRand, angle, angleRand, scale, scaleRand }
+   *                  strokeWidth, strokeWidthRand, safe, safeRand, angle, angleRand, scale, scaleRand,
+   *                  stroke: 'normal'|'rough', rough: { spacing, size, wobble } (fractions, see stroke.js) }
    */
   constructor(shapes, P, seed) {
     this.P = P;
     this.W = P.width;
     this.H = P.height;
+    this.seed = seed;
     this.rng = makeRng(seed);
+    this.rough = P.stroke === 'rough' ? P.rough : null;
 
     const swMin = Math.max(0.1, P.strokeWidth - P.strokeWidthRand);
     const swMax = Math.max(0.1, P.strokeWidth + P.strokeWidthRand);
@@ -54,16 +58,17 @@ export class Packer {
     const tol = 0.2 / scaleMax; // simplify to ~0.2px at the largest scale
 
     this.shapes = shapes.map((s) => {
-      const segs = [];
+      const segs = [], lines = [];
       for (const poly of s.polys) {
         const q = simplify(poly, tol);
+        lines.push(q);
         for (let i = 0; i + 1 < q.length; i++) segs.push(q[i][0], q[i][1], q[i + 1][0], q[i + 1][1]);
       }
-      return { ...s, segs };
+      return { ...s, segs, lines };
     });
 
-    this.minR = swMin / 2;
-    this.maxG = (swMax + safeMax) / 2;
+    this.minR = this.strokeRadius(swMin);
+    this.maxG = this.strokeRadius(swMax) + safeMax / 2;
     this.maxRad = Math.max(...this.shapes.map((s) => s.rad)) * scaleMax;
     this.cap = Math.max(2, this.maxG * 2); // max sphere-tracing step
     this.cell = Math.max(4, this.maxG * 2 + this.cap);
@@ -82,6 +87,12 @@ export class Packer {
     this.covCols = Math.ceil(this.W / this.covSize);
     this.covered = new Uint8Array(this.covCols * Math.ceil(this.H / this.covSize));
     this.coveredCount = 0;
+  }
+
+  // How far a stroke of width `sw` reaches from the path: half its width, or for a rough
+  // stroke its largest possible (grown and shifted) circle.
+  strokeRadius(sw) {
+    return this.rough ? roughExtent(sw / 2, this.rough) : sw / 2;
   }
 
   jitter(base, spread) {
@@ -109,10 +120,11 @@ export class Packer {
       if (x < minx) minx = x; if (x > maxx) maxx = x;
       if (y < miny) miny = y; if (y > maxy) maxy = y;
     }
+    const r = this.strokeRadius(sw);
     return {
       si, sw, safe, angle, scale, color, local, minx, miny, maxx, maxy,
-      r: sw / 2,
-      g: (sw + safe) / 2,
+      r,
+      g: r + safe / 2,
       rad: this.shapes[si].rad * scale,
     };
   }
@@ -198,7 +210,7 @@ export class Packer {
   place(sp, x, y) {
     const { W, H, cell, margin } = this;
     const p = {
-      si: sp.si, x, y, angle: sp.angle, scale: sp.scale, sw: sp.sw, safe: sp.safe, color: sp.color,
+      id: this.placed.length, si: sp.si, x, y, angle: sp.angle, scale: sp.scale, sw: sp.sw, safe: sp.safe, color: sp.color,
       r: sp.r, g: sp.g, rad: sp.rad, minx: sp.minx, miny: sp.miny, maxx: sp.maxx, maxy: sp.maxy,
     };
     const idx = this.placed.push(p) - 1;
@@ -320,21 +332,29 @@ export class Packer {
     this.progress = 1;
   }
 
-  // Output paths for one placement (several copies in tile mode).
+  // Output <path> attributes for one placement (several copies in tile mode).
   pathsFor(p) {
     const shape = this.shapes[p.si];
     const a = (p.angle * Math.PI) / 180;
     const cos = Math.cos(a) * p.scale, sin = Math.sin(a) * p.scale;
     const offsets = this.P.edge === 'tile' ? TILE_OFFSETS : [[0, 0]];
+    // Rough circles come from their own RNG, so drawing never shifts the layout, and are
+    // made once per placement so tile copies match.
+    if (this.rough && !p.circles) {
+      p.circles = roughCircles(shape.lines, [cos, sin, -sin, cos, 0, 0], p.sw / 2, this.rough, makeRng(`${this.seed}/${p.id}`));
+    }
     const out = [];
     for (const [ox, oy] of offsets) {
       const x = p.x + ox * this.W, y = p.y + oy * this.H;
       if (x + p.maxx + p.r < 0 || x + p.minx - p.r > this.W || y + p.maxy + p.r < 0 || y + p.miny - p.r > this.H) continue;
-      out.push({
-        d: cmdsToD(transformCmds(shape.cmds, [cos, sin, -sin, cos, x, y])),
-        stroke: p.color,
-        width: Math.round(p.sw * 100) / 100,
-      });
+      if (this.rough) out.push({ d: circlesToD(p.circles, x, y), fill: p.color });
+      else {
+        out.push({
+          d: cmdsToD(transformCmds(shape.cmds, [cos, sin, -sin, cos, x, y])),
+          stroke: p.color,
+          'stroke-width': Math.round(p.sw * 100) / 100,
+        });
+      }
     }
     return out;
   }
@@ -348,8 +368,8 @@ export class Packer {
     if (background) lines.push(`<rect width="${W}" height="${H}" fill="${background}"/>`);
     lines.push(`<g clip-path="url(#canvas)" fill="none" stroke-linecap="round" stroke-linejoin="round">`);
     for (const p of this.placed) {
-      for (const path of this.pathsFor(p)) {
-        lines.push(`<path d="${path.d}" stroke="${path.stroke}" stroke-width="${path.width}"/>`);
+      for (const attrs of this.pathsFor(p)) {
+        lines.push(`<path ${Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`);
       }
     }
     lines.push('</g>', '</svg>');

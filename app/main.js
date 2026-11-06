@@ -1,6 +1,7 @@
 import { IDENTITY, multiply, parseTransform, parsePathData, transformCmds, elementToPathData, prepareShape, cmdsToD } from './geometry.js';
-import { Packer } from './generator.js';
+import { Packer, makeRng } from './generator.js';
 import { parseHex, oklchGradient } from './color.js';
+import { roughExtent, roughCircles, circlesToD } from './stroke.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'pattern-generator-settings';
@@ -17,6 +18,10 @@ const DEFAULTS = {
   edge: 'clip',
   strokeWidth: 6,
   strokeWidthRand: 0,
+  strokeStyle: 'normal',
+  roughSpacing: 20,
+  roughSize: 20,
+  roughWobble: 10,
   safe: 6,
   safeRand: 0,
   angle: 0,
@@ -32,6 +37,11 @@ const SLIDERS = [
     { key: 'strokeWidth', label: 'Width', min: 0.1, max: 40, step: 0.1 },
     { key: 'strokeWidthRand', label: '± random', min: 0, max: 20, step: 0.1 },
   ]],
+  ['Stroke style', 'Rough = circles along the path. All in % of stroke width; spacing ~10% with no randomness looks like a normal stroke', [
+    { key: 'roughSpacing', label: 'Spacing %', min: 5, max: 200, step: 1 },
+    { key: 'roughSize', label: 'Size ± %', min: 0, max: 100, step: 1 },
+    { key: 'roughWobble', label: 'Wobble %', min: 0, max: 100, step: 1 },
+  ], { key: 'strokeStyle', options: [['normal', 'Normal'], ['rough', 'Rough']] }],
   ['Safe zone', 'Ghost stroke = stroke width + safe distance; new shapes never touch it', [
     { key: 'safe', label: 'Distance', min: 0, max: 40, step: 0.1 },
     { key: 'safeRand', label: '± random', min: 0, max: 20, step: 0.1 },
@@ -60,12 +70,23 @@ let loadedFolder = null; // shape set the current shapes came from
 
 function buildSliders() {
   const root = $('sliders');
-  for (const [title, hint, rows] of SLIDERS) {
+  for (const [title, hint, rows, select] of SLIDERS) {
     const section = document.createElement('section');
     section.innerHTML = `<h2>${title}</h2>`;
+    // A group with a select (bound like the other FIELDS) shows its sliders only for the
+    // option the sliders belong to — the last one.
+    if (select) {
+      section.className = 'has-select';
+      section.dataset.for = select.key;
+      section.dataset.show = select.options.at(-1)[0];
+      const el = document.createElement('select');
+      el.id = select.key;
+      el.append(...select.options.map(([value, text]) => Object.assign(document.createElement('option'), { value, textContent: text })));
+      section.append(el);
+    }
     rows.forEach((row, i) => {
       const el = document.createElement('div');
-      el.className = 'slider' + (i ? ' sub' : '');
+      el.className = 'slider' + (i && !select ? ' sub' : '');
       el.innerHTML =
         `<label for="${row.key}">${row.label}</label>` +
         `<input type="range" min="${row.min}" max="${row.max}" step="${row.step}">` +
@@ -128,7 +149,13 @@ function bindInputs() {
   new ResizeObserver(fit).observe($('viewport'));
 }
 
-const FIELDS = ['folder', 'colorFrom', 'colorTo', 'colorCount', 'width', 'height', 'background', 'transparent', 'edge', 'seed', 'auto'];
+const FIELDS = ['folder', 'colorFrom', 'colorTo', 'colorCount', 'width', 'height', 'background', 'transparent', 'edge', 'strokeStyle', 'seed', 'auto'];
+
+function showSelectedGroups() {
+  for (const section of document.querySelectorAll('section.has-select')) {
+    section.classList.toggle('collapsed', settings[section.dataset.for] !== section.dataset.show);
+  }
+}
 
 // Push `settings` into every control.
 function syncInputs() {
@@ -144,6 +171,7 @@ function syncInputs() {
     const value = settings[picker.dataset.for];
     if (parseHex(value)) picker.value = normalizeHex(value);
   }
+  showSelectedGroups();
   renderSwatches();
 }
 
@@ -217,6 +245,7 @@ async function feelingLucky() {
   let next;
   for (let attempt = 0; attempt < 200; attempt++) {
     const strokeWidth = rand(2, 16, 0.5);
+    const strokeStyle = pick(['normal', 'rough']);
     const safe = rand(1, 16, 0.5);
     const scale = round1(rand(1, 8, 0.1));
     next = {
@@ -229,6 +258,10 @@ async function feelingLucky() {
       edge: pick(['clip', 'inside', 'tile']),
       strokeWidth,
       strokeWidthRand: round1(Math.random() * strokeWidth * 0.4),
+      strokeStyle,
+      roughSpacing: rand(15, 120),
+      roughSize: rand(0, 50),
+      roughWobble: rand(0, 40),
       safe,
       safeRand: round1(Math.random() * safe * 0.5),
       angle: rand(-180, 180),
@@ -253,7 +286,8 @@ function update(key, value, force = false) {
   settings[key] = value;
   save();
   if (key.startsWith('color')) renderSwatches();
-  if (key === 'scale' || key === 'strokeWidth') renderShapeList();
+  if (key === 'strokeStyle') showSelectedGroups();
+  if (key === 'scale' || key.startsWith('stroke') || key.startsWith('rough')) renderShapeList();
   if (key === 'background' || key === 'transparent') return applyBackground();
   if (settings.auto || force) {
     clearTimeout(debounce);
@@ -334,17 +368,22 @@ function renderShapeList() {
   list.replaceChildren();
   const scale = Math.max(0.01, Number(settings.scale) || 1);
   const sw = Math.max(0.1, Number(settings.strokeWidth) || 1);
-  const size = Math.max(...shapes.map((s) => Math.max(s.width, s.height) * scale), 0) * 1.15 + sw * 1.5;
+  const { stroke, rough } = readParams();
+  const thick = stroke === 'rough' ? 2 * roughExtent(sw / 2, rough) : sw;
+  const size = Math.max(...shapes.map((s) => Math.max(s.width, s.height) * scale), 0) * 1.15 + thick * 1.5;
   for (const s of shapes) {
     const svg = svgEl('svg', { viewBox: `${-size / 2} ${-size / 2} ${size} ${size}` });
-    svg.append(svgEl('path', {
-      d: cmdsToD(transformCmds(s.cmds, [scale, 0, 0, scale, 0, 0])),
-      fill: 'none',
-      stroke: '#1d1d1f',
-      'stroke-width': sw,
-      'stroke-linecap': 'round',
-      'stroke-linejoin': 'round',
-    }));
+    const m = [scale, 0, 0, scale, 0, 0];
+    svg.append(svgEl('path', stroke === 'rough'
+      ? { d: circlesToD(roughCircles(s.polys, m, sw / 2, rough, makeRng(s.name))), fill: '#1d1d1f' }
+      : {
+        d: cmdsToD(transformCmds(s.cmds, m)),
+        fill: 'none',
+        stroke: '#1d1d1f',
+        'stroke-width': sw,
+        'stroke-linecap': 'round',
+        'stroke-linejoin': 'round',
+      }));
     const title = svgEl('title', {});
     title.textContent = s.name;
     svg.append(title);
@@ -413,6 +452,12 @@ function readParams() {
     angleRand: Math.abs(n('angleRand')),
     scale: n('scale'),
     scaleRand: Math.abs(n('scaleRand')),
+    stroke: settings.strokeStyle,
+    rough: {
+      spacing: Math.max(0.05, n('roughSpacing') / 100),
+      size: Math.min(1, Math.abs(n('roughSize')) / 100),
+      wobble: Math.abs(n('roughWobble')) / 100,
+    },
   };
 }
 
@@ -452,9 +497,7 @@ function generate() {
     }
     const frag = document.createDocumentFragment();
     for (; drawn < packer.placed.length; drawn++) {
-      for (const p of packer.pathsFor(packer.placed[drawn])) {
-        frag.append(svgEl('path', { d: p.d, stroke: p.stroke, 'stroke-width': p.width }));
-      }
+      for (const attrs of packer.pathsFor(packer.placed[drawn])) frag.append(svgEl('path', attrs));
     }
     g.append(frag);
     if (done) return setPending(false);

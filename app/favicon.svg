@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <style>
+    rect { fill: #1d1d1f } .a { stroke: #fff } .b { stroke: #8e8e93 }
+    @media (prefers-color-scheme: dark) { rect { fill: #e8e8ea } .a { stroke: #1d1d1f } .b { stroke: #77777c } }
+  </style>
+  <rect width="16" height="16" rx="3"/>
+  <g fill="none" stroke-width="2" stroke-linecap="round">
+    <path class="a" d="M3.5 4 7 6M11 8v4.5"/>
+    <path class="b" d="M10 4h3M4 10l1.5 3"/>
+  </g>
+</svg>

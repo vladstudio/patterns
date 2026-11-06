@@ -216,7 +216,7 @@ export function transformCmds(cmds, m) {
   });
 }
 
-const fmt = (n) => {
+export const fmt = (n) => {
   const s = (Math.round(n * 100) / 100).toString();
   return s === '-0' ? '0' : s;
 };

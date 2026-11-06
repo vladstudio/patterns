@@ -8,6 +8,8 @@
 // No circle reaches further than roughExtent(r, opts) from the path, which is what the
 // packer uses as the shape's stroke radius so the safe zone still holds.
 
+import { fmt } from './geometry.js';
+
 const MAX_CIRCLES = 5000; // per sub-path, in case of a huge shape with a hairline stroke
 
 export function roughExtent(r, { size, wobble }) {
@@ -28,7 +30,7 @@ export function roughCircles(polys, m, r, { size, spacing, wobble }, rng) {
   for (const poly of polys) {
     const pts = poly.map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
     let total = 0;
-    for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    for (let i = 1; i < pts.length; i++) total += segLen(pts, i);
     const n = Math.min(MAX_CIRCLES, Math.max(1, Math.round(total / step)));
     const gap = total / n;
 
@@ -52,11 +54,10 @@ const segLen = (pts, i) => Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts
 
 // One path with a sub-path per circle, offset by (dx, dy). Overlaps union under nonzero fill.
 export function circlesToD(circles, dx = 0, dy = 0) {
-  const r2 = (v) => Math.round(v * 100) / 100;
   let s = '';
   for (let i = 0; i < circles.length; i += 3) {
-    const x = circles[i] + dx, y = circles[i + 1] + dy, r = r2(circles[i + 2]);
-    s += `M${r2(x - r)} ${r2(y)}a${r} ${r} 0 1 0 ${r2(2 * r)} 0a${r} ${r} 0 1 0 ${r2(-2 * r)} 0`;
+    const x = circles[i] + dx, y = circles[i + 1] + dy, r = +fmt(circles[i + 2]);
+    s += `M${fmt(x - r)} ${fmt(y)}a${r} ${r} 0 1 0 ${fmt(2 * r)} 0a${r} ${r} 0 1 0 ${fmt(-2 * r)} 0`;
   }
   return s;
 }

@@ -136,13 +136,15 @@ function bindInputs() {
   $('folder').addEventListener('focus', loadFolderList);
   $('lucky').addEventListener('click', feelingLucky);
   $('reseed').addEventListener('click', () => {
-    const seed = Math.random().toString(36).slice(2, 8);
+    const seed = newSeed();
     $('seed').value = seed;
     update('seed', seed, true);
   });
   $('generate').addEventListener('click', generate);
   $('download').addEventListener('click', download);
-  $('exportSettings').addEventListener('click', exportSettings);
+  $('exportSettings').addEventListener('click', () => {
+    saveFile(`pattern-settings-${settings.seed}.json`, JSON.stringify(settings, null, 2), 'application/json');
+  });
   $('importSettings').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', importSettings);
   $('frame').addEventListener('click', () => { $('frame').classList.toggle('actual'); fit(); });
@@ -173,15 +175,6 @@ function syncInputs() {
   }
   showSelectedGroups();
   renderSwatches();
-}
-
-function exportSettings() {
-  const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `pattern-settings-${settings.seed}.json`.replace(/[^\w.-]+/g, '_');
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // Only known keys are taken, and only when their type matches the default's.
@@ -266,7 +259,7 @@ async function feelingLucky() {
       angleRand: rand(0, 180),
       scale,
       scaleRand: round1(Math.random() * scale * 0.3),
-      seed: Math.random().toString(36).slice(2, 8),
+      seed: newSeed(),
     };
     // Rough shape count: canvas area over each shape's footprint (calibrated on real runs).
     const thick = strokeWidth + safe;
@@ -296,6 +289,8 @@ function update(key, value, force = false) {
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
+
+const newSeed = () => Math.random().toString(36).slice(2, 8);
 
 function normalizeHex(hex) {
   return '#' + parseHex(hex).map((c) => Math.round(c * 255).toString(16).padStart(2, '0')).join('');
@@ -364,20 +359,19 @@ async function fetchShapes(folder) {
 function renderShapeList() {
   const list = $('shapeList');
   list.replaceChildren();
-  const scale = Math.max(0.01, Number(settings.scale) || 1);
-  const sw = Math.max(0.1, Number(settings.strokeWidth) || 1);
-  const { stroke, rough } = readParams();
+  const P = readParams(), { stroke, rough } = P;
+  const scale = Math.max(0.01, P.scale), sw = Math.max(0.1, P.strokeWidth);
   const thick = stroke === 'rough' ? 2 * roughExtent(sw / 2, rough) : sw;
   const size = Math.max(...shapes.map((s) => Math.max(s.width, s.height) * scale), 0) * 1.15 + thick * 1.5;
   for (const s of shapes) {
     const svg = svgEl('svg', { viewBox: `${-size / 2} ${-size / 2} ${size} ${size}` });
     const m = [scale, 0, 0, scale, 0, 0];
     svg.append(svgEl('path', stroke === 'rough'
-      ? { d: circlesToD(roughCircles(s.polys, m, sw / 2, rough, makeRng(s.name))), fill: '#1d1d1f' }
+      ? { d: circlesToD(roughCircles(s.polys, m, sw / 2, rough, makeRng(s.name))), fill: 'currentColor' }
       : {
         d: cmdsToD(transformCmds(s.cmds, m)),
         fill: 'none',
-        stroke: '#1d1d1f',
+        stroke: 'currentColor',
         'stroke-width': sw,
         'stroke-linecap': 'round',
         'stroke-linejoin': 'round',
@@ -387,38 +381,25 @@ function renderShapeList() {
     svg.append(title);
     list.append(svg);
   }
-  if (!shapes.length && loadedFolder) {
-    const msg = document.createElement('div');
-    msg.className = 'msg err';
-    msg.textContent = `No usable shapes in “${loadedFolder}”`;
-    list.append(msg);
-  }
-  for (const e of shapeErrors) {
-    const el = document.createElement('div');
-    el.className = 'msg err';
-    el.textContent = e;
-    list.append(el);
-  }
+  const errors = !shapes.length && loadedFolder ? [`No usable shapes in “${loadedFolder}”`, ...shapeErrors] : shapeErrors;
+  list.append(...errors.map((text) => Object.assign(document.createElement('div'), { className: 'msg err', textContent: text })));
 }
 
 async function loadFolder() {
   const folder = settings.folder;
   if (!folder) return status('Add a folder of SVGs to shapes/ to start');
   try {
-    ({ shapes, errors: shapeErrors } = await fetchShapes(folder));
+    const set = await fetchShapes(folder);
+    if (folder !== settings.folder) return; // another set was picked while this one loaded
+    ({ shapes, errors: shapeErrors } = set);
     loadedFolder = folder;
-    renderShapeList();
-    generate();
   } catch (err) {
     shapes = [];
-    shapeErrors = [];
+    shapeErrors = [`Couldn't load “${folder}”: ${err.message}`];
     loadedFolder = null;
-    $('shapeList').innerHTML = '';
-    const el = document.createElement('div');
-    el.className = 'msg err';
-    el.textContent = `Couldn't load “${folder}”: ${err.message}`;
-    $('shapeList').append(el);
   }
+  renderShapeList();
+  generate();
 }
 
 async function loadFolderList() {
@@ -550,9 +531,13 @@ function status(text) {
 function download() {
   if (!packer) return;
   const text = packer.toSvg({ background: settings.transparent ? null : settings.background });
+  saveFile(`pattern-${settings.folder}-${settings.seed}.svg`, text, 'image/svg+xml');
+}
+
+function saveFile(name, text, type) {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
-  a.download = `pattern-${settings.folder || 'shapes'}-${settings.seed}.svg`.replace(/[^\w.-]+/g, '_');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name.replace(/[^\w.-]+/g, '_');
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }

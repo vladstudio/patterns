@@ -10,7 +10,7 @@
 // until it touches a ghost, so shapes sit snugly. Phase 2 sweeps the canvas and drops
 // shapes into any hole that is still large enough.
 
-import { segSegDist, pointSegDist2, simplify, transformCmds, cmdsToD } from './geometry.js';
+import { segSegDist, pointSegDist2, simplify, transformCmds, cmdsToD, fmt } from './geometry.js';
 import { roughExtent, roughCircles, circlesToD } from './stroke.js';
 
 const TILE_OFFSETS = [];
@@ -209,17 +209,14 @@ export class Packer {
 
   place(sp, x, y) {
     const { W, H, cell, margin } = this;
-    const p = {
-      id: this.placed.length, si: sp.si, x, y, angle: sp.angle, scale: sp.scale, sw: sp.sw, safe: sp.safe, color: sp.color,
-      r: sp.r, g: sp.g, rad: sp.rad, minx: sp.minx, miny: sp.miny, maxx: sp.maxx, maxy: sp.maxy,
-    };
-    const idx = this.placed.push(p) - 1;
+    const { local: L, ...spec } = sp;
+    const p = { ...spec, id: this.placed.length, x, y };
+    this.placed.push(p);
     if (x >= 0 && x < W && y >= 0 && y < H) {
       const c = Math.floor(y / this.covSize) * this.covCols + Math.floor(x / this.covSize);
       if (!this.covered[c]) { this.covered[c] = 1; this.coveredCount++; }
     }
     const offsets = this.P.edge === 'tile' ? TILE_OFFSETS : [[0, 0]];
-    const L = sp.local;
 
     for (const [ox, oy] of offsets) {
       const dx = x + ox * W, dy = y + oy * H;
@@ -242,7 +239,7 @@ export class Packer {
         }
       }
     }
-    return idx;
+    return p.id;
   }
 
   // Slide the candidate along (dx, dy) until it touches something. Returns the final
@@ -352,7 +349,7 @@ export class Packer {
         out.push({
           d: cmdsToD(transformCmds(shape.cmds, [cos, sin, -sin, cos, x, y])),
           stroke: p.color,
-          'stroke-width': Math.round(p.sw * 100) / 100,
+          'stroke-width': fmt(p.sw),
         });
       }
     }

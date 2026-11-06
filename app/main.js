@@ -223,7 +223,7 @@ function applySettings() {
 
 // Ranges are narrower than the sliders' on purpose, and a draw is rejected when it would
 // produce more than ~LUCKY_MAX_SHAPES (e.g. dots with a 2px stroke on a large canvas
-// is 180k shapes and several seconds of work). Canvas size is left as it is.
+// is 180k shapes and several seconds of work). Canvas size and background are left as they are.
 const LUCKY_MAX_SHAPES = 15000;
 
 async function feelingLucky() {
@@ -253,8 +253,6 @@ async function feelingLucky() {
       colorFrom: hex(),
       colorTo: hex(),
       colorCount: rand(2, 8),
-      background: hex(),
-      transparent: Math.random() < 0.2,
       edge: pick(['clip', 'inside', 'tile']),
       strokeWidth,
       strokeWidthRand: round1(Math.random() * strokeWidth * 0.4),

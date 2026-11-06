@@ -1,6 +1,6 @@
 // Reads the shape sets in ./shapes/<name>/*.svg into the shapes.json the app loads:
 //   { "<set>": [{ "name": "1.svg", "svg": "<svg…>" }, …], … }
-// Used live by server.mjs and once by tools/build.mjs.
+// Used by server.mjs.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

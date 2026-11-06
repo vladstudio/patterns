@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://vladstudio.github.io/patterns/sitemap.xml

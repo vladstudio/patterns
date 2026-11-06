@@ -3,11 +3,9 @@
   "private": true,
   "description": "Pack SVG shapes into dense, non-overlapping patterns and seamless tiles",
   "license": "MIT",
-  "homepage": "https://vladstudio.github.io/patterns/",
   "repository": "github:vladstudio/patterns",
   "type": "module",
   "scripts": {
-    "start": "node server.mjs",
-    "build": "node tools/build.mjs"
+    "start": "node server.mjs"
   }
 }

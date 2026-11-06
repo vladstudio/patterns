@@ -2,8 +2,6 @@
 
 Pack small SVG shapes (squiggles, dots, spirals, your own) into dense, non-overlapping patterns and seamless tiles. Runs in the browser, exports SVG.
 
-**[Open the app →](https://vladstudio.github.io/patterns/)**
-
 ![Example pattern](app/og.png)
 
 ## Features
@@ -15,13 +13,12 @@ Pack small SVG shapes (squiggles, dots, spirals, your own) into dense, non-overl
 - Same seed + settings = same pattern; export and import settings as JSON
 - Works on phones
 
-## Run locally
+## Run
 
 Needs Node 18+, no dependencies.
 
 ```sh
-npm start          # http://localhost:8787
-npm run build      # static site in dist/
+npm start   # http://localhost:8787
 ```
 
 ## Add shapes

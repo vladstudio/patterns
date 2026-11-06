@@ -6,7 +6,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const STORAGE_KEY = 'pattern-generator-settings';
 
 const DEFAULTS = {
-  folder: '01',
+  folder: 'almost-straight',
   colorFrom: '#000000',
   colorTo: '#FFFFFF',
   colorCount: 6,
@@ -53,7 +53,8 @@ for (const key in DEFAULTS) if (typeof stored[key] === typeof DEFAULTS[key]) set
 let shapes = [];
 let packer = null;
 let job = 0;
-let loadedFolder = null; // folder the current shapes came from (null if picked from disk)
+let folders = []; // shape sets available in ./shapes
+let loadedFolder = null; // shape set the current shapes came from
 
 // ---------- controls ----------
 
@@ -94,9 +95,11 @@ function bindInputs() {
     el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', () => {
       const value = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value;
       if (el.type === 'number' && !(value > 0)) return;
-      if (key !== 'folder') update(key, value);
-      else settings.folder = value;
+      if (key !== 'folder') return update(key, value);
+      settings.folder = value;
       save();
+      $('folderNote').textContent = '';
+      loadFolder();
     });
   }
   // Each hex field has a color picker next to it; keep the two in sync.
@@ -108,9 +111,9 @@ function bindInputs() {
       update(picker.dataset.for, text.value);
     });
   }
-  $('folder').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadFolder(); });
-  $('loadFolder').addEventListener('click', loadFolder);
-  $('pickFolder').addEventListener('change', pickFolder);
+  // Pick up folders added to ./shapes while the page is open.
+  $('folder').addEventListener('focus', loadFolderList);
+  $('lucky').addEventListener('click', feelingLucky);
   $('reseed').addEventListener('click', () => {
     const seed = Math.random().toString(36).slice(2, 8);
     $('seed').value = seed;
@@ -165,13 +168,86 @@ async function importSettings(e) {
   } catch (err) {
     return status(`Couldn't import ${file.name}: ${err.message}`);
   }
+  const previousFolder = settings.folder;
   for (const key in DEFAULTS) {
     if (typeof data[key] === typeof DEFAULTS[key]) settings[key] = data[key];
   }
+  await loadFolderList();
+  if (!folders.includes(settings.folder)) {
+    $('folderNote').textContent = `${file.name} uses shape set “${settings.folder}”, which isn't in shapes/. Kept “${previousFolder}”.`;
+    settings.folder = previousFolder;
+  } else {
+    $('folderNote').textContent = '';
+  }
+  applySettings();
+}
+
+// After `settings` changed wholesale: persist, refresh controls, redraw.
+function applySettings() {
   save();
   syncInputs();
-  if (settings.folder && settings.folder !== loadedFolder) loadFolder();
-  else generate();
+  if (settings.folder !== loadedFolder) loadFolder();
+  else {
+    renderShapeList();
+    generate();
+  }
+}
+
+// Ranges are narrower than the sliders' on purpose, and a draw is rejected when it would
+// produce more than ~LUCKY_MAX_SHAPES (e.g. dots with a 2px stroke on a large canvas
+// is 180k shapes and several seconds of work).
+const LUCKY_MAX_SHAPES = 15000;
+
+async function feelingLucky() {
+  const rand = (min, max, step = 1) => Math.round((min + Math.random() * (max - min)) / step) * step;
+  const round1 = (v) => Math.round(v * 10) / 10;
+  const pick = (list) => list[Math.floor(Math.random() * list.length)];
+  const hex = () => '#' + Math.floor(Math.random() * 0x1000000).toString(16).padStart(6, '0').toUpperCase();
+
+  await loadFolderList();
+  const folder = pick(folders) ?? settings.folder;
+  let set;
+  try {
+    set = await fetchShapes(folder);
+  } catch (err) {
+    return status(`Couldn't load “${folder}”: ${err.message}`);
+  }
+  const length = set.shapes.reduce((sum, s) => sum + Math.max(s.width, s.height), 0) / Math.max(1, set.shapes.length);
+
+  let next;
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const strokeWidth = rand(2, 16, 0.5);
+    const safe = rand(1, 16, 0.5);
+    const scale = round1(rand(1, 8, 0.1));
+    next = {
+      folder,
+      colorFrom: hex(),
+      colorTo: hex(),
+      colorCount: rand(2, 8),
+      width: rand(400, 1200, 50),
+      height: rand(400, 1200, 50),
+      background: hex(),
+      transparent: Math.random() < 0.2,
+      edge: pick(['clip', 'inside', 'tile']),
+      strokeWidth,
+      strokeWidthRand: round1(Math.random() * strokeWidth * 0.4),
+      safe,
+      safeRand: round1(Math.random() * safe * 0.5),
+      angle: rand(-180, 180),
+      angleRand: rand(0, 180),
+      scale,
+      scaleRand: round1(Math.random() * scale * 0.3),
+      seed: Math.random().toString(36).slice(2, 8),
+    };
+    // Rough shape count: canvas area over each shape's footprint (calibrated on real runs).
+    const thick = strokeWidth + safe;
+    if ((1.25 * next.width * next.height) / ((length * scale + thick) * thick) <= LUCKY_MAX_SHAPES) break;
+  }
+  Object.assign(settings, next);
+  ({ shapes, errors: shapeErrors } = set);
+  loadedFolder = folder;
+  $('folderNote').textContent = '';
+  applySettings();
 }
 
 let debounce = 0;
@@ -179,6 +255,7 @@ function update(key, value, force = false) {
   settings[key] = value;
   save();
   if (key.startsWith('color')) renderSwatches();
+  if (key === 'scale' || key === 'strokeWidth') renderShapeList();
   if (key === 'background' || key === 'transparent') return applyBackground();
   if (settings.auto || force) {
     clearTimeout(debounce);
@@ -233,10 +310,14 @@ function svgToShape(name, text) {
   return prepareShape(name, cmds);
 }
 
-function setShapes(files, label) {
-  const errors = [];
-  shapes = [];
-  for (const { name, svg } of files) {
+let shapeErrors = [];
+
+async function fetchShapes(folder) {
+  const res = await fetch(`/api/shapes?folder=${encodeURIComponent(folder)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  const shapes = [], errors = [];
+  for (const { name, svg } of data) {
     try {
       const s = svgToShape(name, svg);
       if (s) shapes.push(s);
@@ -245,38 +326,39 @@ function setShapes(files, label) {
       errors.push(err.message);
     }
   }
-  renderShapeList(label, errors);
-  generate();
+  return { shapes, errors };
 }
 
-function renderShapeList(label, errors = []) {
+// Thumbnails show each shape as it will be drawn (current scale and stroke width),
+// all at the same zoom so their relative sizes are visible.
+function renderShapeList() {
   const list = $('shapeList');
   list.replaceChildren();
+  const scale = Math.max(0.01, Number(settings.scale) || 1);
+  const sw = Math.max(0.1, Number(settings.strokeWidth) || 1);
+  const size = Math.max(...shapes.map((s) => Math.max(s.width, s.height) * scale), 0) * 1.15 + sw * 1.5;
   for (const s of shapes) {
-    const pad = Math.max(s.width, s.height) * 0.25 + 0.5;
-    const size = Math.max(s.width, s.height) + pad * 2;
-    const svg = document.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', `${-size / 2} ${-size / 2} ${size} ${size}`);
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', cmdsToD(s.cmds.map((c) => c.p ? { c: c.c, p: c.p.map((v) => v * 100) } : c)));
-    path.setAttribute('transform', 'scale(0.01)');
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', '#1d1d1f');
-    path.setAttribute('stroke-width', size * 6);
-    path.setAttribute('stroke-linecap', 'round');
-    path.setAttribute('stroke-linejoin', 'round');
-    svg.append(path);
-    const title = document.createElementNS(SVG_NS, 'title');
+    const svg = svgEl('svg', { viewBox: `${-size / 2} ${-size / 2} ${size} ${size}` });
+    svg.append(svgEl('path', {
+      d: cmdsToD(transformCmds(s.cmds, [scale, 0, 0, scale, 0, 0])),
+      fill: 'none',
+      stroke: '#1d1d1f',
+      'stroke-width': sw,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }));
+    const title = svgEl('title', {});
     title.textContent = s.name;
     svg.append(title);
     list.append(svg);
   }
-  const msg = document.createElement('div');
-  msg.className = 'msg' + (shapes.length ? '' : ' err');
-  msg.style.width = '100%';
-  msg.textContent = shapes.length ? `${shapes.length} shapes from ${label}` : `No usable shapes in ${label}`;
-  list.append(msg);
-  for (const e of errors) {
+  if (!shapes.length && loadedFolder) {
+    const msg = document.createElement('div');
+    msg.className = 'msg err';
+    msg.textContent = `No usable shapes in “${loadedFolder}”`;
+    list.append(msg);
+  }
+  for (const e of shapeErrors) {
     const el = document.createElement('div');
     el.className = 'msg err';
     el.textContent = e;
@@ -285,18 +367,16 @@ function renderShapeList(label, errors = []) {
 }
 
 async function loadFolder() {
-  const folder = $('folder').value.trim();
-  if (!folder) return;
-  settings.folder = folder;
-  save();
+  const folder = settings.folder;
+  if (!folder) return status('Add a folder of SVGs to shapes/ to start');
   try {
-    const res = await fetch(`/api/shapes?folder=${encodeURIComponent(folder)}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    ({ shapes, errors: shapeErrors } = await fetchShapes(folder));
     loadedFolder = folder;
-    setShapes(data, `“${folder}”`);
+    renderShapeList();
+    generate();
   } catch (err) {
     shapes = [];
+    shapeErrors = [];
     loadedFolder = null;
     $('shapeList').innerHTML = '';
     const el = document.createElement('div');
@@ -306,21 +386,16 @@ async function loadFolder() {
   }
 }
 
-async function pickFolder(e) {
-  const files = [...e.target.files].filter((f) => f.name.toLowerCase().endsWith('.svg'));
-  files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  const folder = e.target.files[0]?.webkitRelativePath.split('/')[0] || 'picked folder';
-  $('folder').value = '';
-  loadedFolder = null;
-  setShapes(await Promise.all(files.map(async (f) => ({ name: f.name, svg: await f.text() }))), `“${folder}” (from disk)`);
-  e.target.value = '';
-}
-
 async function loadFolderList() {
   try {
-    const folders = await (await fetch('/api/folders')).json();
-    $('folders').replaceChildren(...folders.map((f) => Object.assign(document.createElement('option'), { value: f })));
-  } catch {}
+    folders = await (await fetch('/api/folders')).json();
+  } catch {
+    folders = [];
+  }
+  const select = $('folder');
+  const current = [...select.options].map((o) => o.value);
+  if (current.join('\n') !== folders.join('\n')) select.replaceChildren(...folders.map((f) => Object.assign(document.createElement('option'), { value: f, textContent: f })));
+  select.value = settings.folder;
 }
 
 // ---------- generation ----------
@@ -352,7 +427,7 @@ function svgEl(tag, attrs) {
 function generate() {
   const my = ++job;
   const P = readParams();
-  if (!shapes.length) return status('Load a shape folder to start');
+  if (!shapes.length) return status('No shapes loaded');
   if (!P.colors.length) return status('Enter valid hex colors, e.g. #1A2B3C');
 
   packer = new Packer(shapes, P, settings.seed);
@@ -430,6 +505,11 @@ function download() {
 buildSliders();
 bindInputs();
 syncInputs();
-loadFolderList();
-if (settings.folder) loadFolder();
-else status('Load a shape folder to start');
+await loadFolderList();
+// A saved folder that no longer exists falls back to the first available set.
+if (!folders.includes(settings.folder)) {
+  settings.folder = folders[0] || '';
+  $('folder').value = settings.folder;
+  save();
+}
+loadFolder();

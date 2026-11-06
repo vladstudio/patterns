@@ -13,12 +13,8 @@
 
     <section>
       <h2>Shapes</h2>
-      <div class="row">
-        <input id="folder" list="folders" placeholder="Folder, e.g. 01" spellcheck="false">
-        <button id="loadFolder">Load</button>
-      </div>
-      <datalist id="folders"></datalist>
-      <label class="link">…or pick a folder from disk<input type="file" id="pickFolder" webkitdirectory multiple hidden></label>
+      <select id="folder"></select>
+      <p id="folderNote" class="msg err"></p>
       <div id="shapeList" class="shapes"></div>
     </section>
 
@@ -61,6 +57,7 @@
         <button id="reseed" title="New random seed">New seed</button>
       </div>
       <label class="check"><input id="auto" type="checkbox"> Regenerate on every change</label>
+      <button id="lucky" class="wide" title="Random values for every setting">I feel lucky</button>
     </section>
 
     <section class="actions">
